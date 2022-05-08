@@ -1,0 +1,298 @@
+---
+title: "coursework"
+author: "Shuo Qiu"
+date: "2022/4/20"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Course Work
+
+```{r}
+library(tidyr)
+library(ggplot2)
+library(cowplot) # for multiple figures plot
+library(ggstance) # for boxplot
+library(dplyr)
+library(rpart) #for tree
+library(rpart.plot) #plot  tree
+library(randomForest) # random forest
+library(MASS) #for linear regression, lda, qda
+library(e1071) #for naive bayes
+library(caret) #cut training set and test set
+```
+```{r}
+#read data from csv file
+data_wisconsin <- read.csv('breast-cancer-wisconsin.csv',header = FALSE)
+#set columas name
+colnames(data_wisconsin) <- c(
+                    'Sample code number',
+                    'Clump Thickness',
+                    'Uniformity of Cell Size',
+                    'Uniformity of Cell Shape',
+                    'Marginal Adhesion',
+                    'Single Epithelial Cell Size',
+                    'Bare Nuclei',
+                    'Bland Chromatin',
+                    'Normal Nucleoli',
+                    'Mitoses',
+                    'Class')
+```
+```{r}
+str(data_wisconsin) #Type information and overview of dataframe
+```
+```{r}
+distinct(data_wisconsin, `Bare Nuclei`, .keep_all=F) #view the data in the column `Bare Nuclei`
+```
+```{r}
+#Delete column of Sample code number
+data_wisconsin <- data_wisconsin[, -1]
+#update ? to NA
+data_wisconsin$`Bare Nuclei`[which(data_wisconsin$`Bare Nuclei` =='?')] <- NA
+#set data type of columa `Bare Nuclei` to integer
+data_wisconsin$`Bare Nuclei` <- as.integer(data_wisconsin$`Bare Nuclei`)
+```
+
+```{r}
+summary(data_wisconsin) #summary
+```
+```{r}
+#select row where column `Bare Nuclei` is not ?
+data_wisconsin_del <- filter(data_wisconsin, `Bare Nuclei` != '?')
+#set data type of columa `Bare Nuclei` to integer
+data_wisconsin_del$`Bare Nuclei` <- as.integer(data_wisconsin_del$`Bare Nuclei`)
+#create dataframe in order to method comparison
+df1 <- as.data.frame(data_wisconsin_del$`Bare Nuclei`)
+df1$method <- 'Delete'
+colnames(df1) <- c('value','method')
+summary(data_wisconsin_del)
+```
+```{r}
+#fill na by 1, which is median
+data_wisconsin_fill1 <- data_wisconsin
+data_wisconsin_fill1$`Bare Nuclei`[which(is.na(data_wisconsin_fill1$`Bare Nuclei`))] <- 1
+data_wisconsin_fill1$`Bare Nuclei` <- as.integer(data_wisconsin_fill1$`Bare Nuclei`)
+#create dataframe in order to method comparison
+df2 <- as.data.frame(data_wisconsin_fill1$`Bare Nuclei`)
+df2$method <- 'Fill median'
+colnames(df2) <- c('value','method')
+summary(data_wisconsin_fill1)
+```
+```{r}
+data_wisconsin_na <- filter(data_wisconsin, is.na(`Bare Nuclei`))
+data_wisconsin_no_na <- filter(data_wisconsin, !is.na(`Bare Nuclei`))
+```
+```{r}
+#fill na by liner regression, fit a model of LR 
+fit_lm <-lm(data = data_wisconsin_no_na, `Bare Nuclei`~`Clump Thickness`+`Uniformity of Cell Size`+`Uniformity of Cell Shape`+`Marginal Adhesion`+
+              `Single Epithelial Cell Size`+`Bland Chromatin`+`Normal Nucleoli`+`Mitoses`)
+step <- stepAIC(fit_lm)
+step$coefficients
+#fill in the na  with the values obtained by linear regression
+myfunction <- function(data_wisconsin_na, CT,UOCS,MA,BC){
+  CT1 <- data_wisconsin_na[CT]
+  UOCS1 <- data_wisconsin_na[UOCS]
+  MA1 <- data_wisconsin_na[MA]
+  BC1 <- data_wisconsin_na[BC]
+  return (-0.5351919 + 0.2268835*CT1 + 0.3162808*UOCS1 + 0.3319004*MA1 + 0.3243842*BC1)
+}
+data_wisconsin_na$`Bare Nuclei` <- round(apply(data_wisconsin_na, MARGIN = 1, myfunction, CT = 'Clump Thickness', UOCS = 'Uniformity of Cell Shape', MA = 'Marginal Adhesion', BC = 'Bland Chromatin'), 0)
+#merge dataframe without na and dataframe filled with na.
+data_wisconsin <- rbind(data_wisconsin_no_na, data_wisconsin_na)
+```
+```{r}
+#check the distribution of the residuals
+hist(fit_lm$residuals,xlab="Residuals",freq=FALSE)
+curve(dnorm(x,0,summary(fit_lm)$sigma),-5,5,lty=2,add=TRUE)
+plot(fit_lm$fitted.values,fit_lm$residuals,xlab="Fitted values",ylab="Residuals")
+abline(h=0,lty=2)
+```
+```{r}
+summary(data_wisconsin)
+```
+```{r}
+#create a dataframe in order to method comparison
+df3 <- as.data.frame(data_wisconsin$`Bare Nuclei`)
+df3$method <- 'Linear Regression'
+colnames(df3) <- c('value','method')
+#meger 3 dataframes
+df4 <- rbind(df1, df2, df3)
+#plot the probability density distributions for the three methods
+ggplot(df4, aes(value, fill = method)) + 
+  geom_density(alpha = 0.4) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.05))) +
+  theme_minimal_hgrid(12)
+```
+
+```{r}
+#plot boxpolt of each attribute grouped by class
+data_wisconsin_t <- gather(data=data_wisconsin,key='attribute',
+                           value='value',c(`Clump Thickness`,
+                                           `Uniformity of Cell Size`,
+                                           `Uniformity of Cell Shape`,
+                                           `Marginal Adhesion`,
+                                           `Single Epithelial Cell Size`,
+                                           `Bare Nuclei`,
+                                           `Bland Chromatin`,
+                                           `Normal Nucleoli`,
+                                           `Mitoses`))
+data_wisconsin_t$Class <- as.character(data_wisconsin_t$Class)
+data_wisconsin_t$Class[which(data_wisconsin_t$Class =='2')] <- 'benign'
+data_wisconsin_t$Class[which(data_wisconsin_t$Class =='4')] <- 'malignant'
+horizontal <- ggplot(data_wisconsin_t, aes(`value`, `Class`))+
+  geom_boxploth(aes(fill = `attribute`))+
+  facet_grid(`attribute` ~ ., scales = "free_y")
+horizontal
+```
+
+#Classification decision tree
+
+```{r}
+index_tree <- createDataPartition(data_wisconsin$Class, p=0.70, list=FALSE) # use the dataset to create a partition (70% training 30% testing)
+test_tree <- data_wisconsin[-index_tree,] # select 30% of the data for testing
+train_tree <- data_wisconsin[index_tree,] # select 70% of data to train the models
+```
+
+```{r}
+#minsplit is the minimum sample size of each node
+#maxdepth is the maximum tree depth
+ctl<-rpart.control(minsplit=20, maxcompete=4, maxdepth= 4, xval=20, cp=0)
+fit_tree <- rpart(Class~., #fit mddel
+                  data = train_tree,
+                  method= 'class', #classification
+                  control=ctl,
+                  parms = list(split='information')) #parms(gini,information) 
+#plot tree
+rpart.plot(fit_tree,type=2,branch=0,extra=2)
+```
+
+```{r}
+#predict data with test sets
+predict_rpart<- predict(fit_tree,test_tree[,-10],type='class')
+#computational accuracy
+mn_wisconsin <- mean(predict_rpart==test_tree$Class)
+mn_wisconsin
+```
+
+```{r}
+#the model with the best fit is selected in a circular manner
+temp <- 0
+cc <- c()
+for (a in c('gini','information')){
+  for (b in 15:25){
+    for (c in 3:5){
+      for (d in c(0.01,0.02,0.03,0.04,0.05)){
+        ctl<-rpart.control(minsplit = b,maxcompete = c,xval=20,cp=d)
+        fit_tree <- rpart(Class~.,
+                  data = train_tree, 
+                  method= 'class',
+                  control=ctl,
+                  parms = list(split=a))
+        predict_rpart<- predict(fit_tree,test_tree[,-10],type='class')
+        if (temp < mean(predict_rpart==test_tree$Class)){
+          temp <- mean(predict_rpart==test_tree$Class)
+          cc <- c(a,b,c,d)
+        }
+      }
+    }
+  }
+}
+print(temp)
+print(cc)
+```
+
+##Naive Bayes
+
+```{r}
+index_bays <- createDataPartition(data_wisconsin$Class,times = 1,p=0.7,list = F) #use the dataset to create a partition (70% training 30% testing)
+train_bays <- data_wisconsin[index_bays,] #select 70% of data to train the models
+test_bays <- data_wisconsin[-index_bays,] #select 30% of the data for testing
+fit_bays <- naiveBayes(Class~., train_bays) #fit model
+predict_bays <- predict(fit_bays,test_bays) #predict data with test sets
+table_bays <- table(actual=test_bays$Class,predict=predict_bays)
+ratio_bays <- sum(diag(table_bays))/sum(table_bays) #computational accuracy
+ratio_bays
+```
+
+##Quadratic Discriminant Analysis
+
+```{r}
+index_qda <- createDataPartition(data_wisconsin$Class,times = 1,p=0.7,list = F) #use the dataset to create a partition (70% training 30% testing)
+train_qda <- data_wisconsin[index_qda,] #select 70% of data to train the models
+test_qda <- data_wisconsin[-index_qda,] #select 30% of the data for testing
+fit_qda <- qda (Class~., data = train_qda) #fit model
+predict_qda <- predict (fit_qda ,test_qda) #predict data with test sets
+table (predict_qda$class , test_qda$Class)
+mean(predict_qda$class == test_qda$Class) #computational accuracy
+```
+
+##Linear Discriminant Analysis
+
+```{r}
+index_lda <- createDataPartition(data_wisconsin$Class,times = 1,p=0.7,list = F) #use the dataset to create a partition (70% training 30% testing)
+train_lda <- data_wisconsin[index_lda,] #select 70% of data to train the models
+test_lda <- data_wisconsin[-index_lda,] #select 30% of the data for testing
+fit_lda <- lda (Class~., data = train_lda) #fit model
+predict_lda <- predict (fit_lda ,test_lda) #predict data with test sets
+table (predict_lda$class , test_lda$Class)
+mean(predict_lda$class == test_lda$Class) #computational accuracy
+```
+
+#Random forest
+
+```{r}
+#set colmums name, because the model cannot fit if the column name have blank
+colnames(train_tree) <- c('C1','C2','C3','C4','C5','C6','C7','C8','C9','R')
+train_tree$R <- as.factor(train_tree$R)
+colnames(test_tree) <- c('C1','C2','C3','C4','C5','C6','C7','C8','C9','R')
+test_tree$R <- as.factor(test_tree$R)
+err<-as.numeric()
+#the optimal parameters are calculated circularly, which are mtry and ntree
+for(i in 1:(length(names(train_tree)))-1){
+mtry_test <- randomForest(R~., data=train_tree, mtry=i, importance=TRUE, proximity=TRUE)
+err<- append( err, mean( mtry_test$err.rate ) )
+}
+print(err)
+mtry<-which.min(err)
+ntree_fit<-randomForest(R~., data=train_tree, mtry=mtry, ntree=1000)
+#indicate the parameter ntree
+plot(ntree_fit)
+```
+```{r}
+#fit model
+rf<-randomForest(R~., data=train_tree, mtry=mtry, ntree=800, importance=T )
+rf
+```
+
+```{r}
+#plot to indicate the importancea of the attributes
+importance(rf)
+varImpPlot(rf)
+```
+
+```{r}
+#predict data with test sets
+pred1<-predict(rf,newdata=test_tree)
+Freq1<-table(pred1,test_tree$R)
+tp<-as.data.frame(Freq1)[4,3]
+tn<-as.data.frame(Freq1)[1,3]
+fn<-as.data.frame(Freq1)[2,3]
+fp<-as.data.frame(Freq1)[3,3]
+#computational accuracy
+p<-tp/(tp+fp)
+r<-tp/(tp+fn)
+f<-2/(1/p+1/r)
+f
+```
+
+
+
+
+
+
+
+
+
